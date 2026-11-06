@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - 'Ronexio-Android-Project.zip'
+      - 'Ronexio-Android-Project*.zip'
       - '.github/workflows/build-apk.yml'
 
 permissions:
@@ -23,24 +23,43 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Install Gradle 8.9
+      - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      - name: Extract Ronexio project
+      - name: Find and extract Ronexio project ZIP
+        shell: bash
         run: |
-          unzip -q Ronexio-Android-Project.zip -d source
-          test -f source/Ronexio/settings.gradle
+          shopt -s nullglob
+          archives=(Ronexio-Android-Project*.zip)
+          if (( ${#archives[@]} == 0 )); then
+            echo 'ERROR: No Ronexio-Android-Project*.zip found in the repository root.'
+            echo 'Upload the Android project ZIP to the top level of this repository.'
+            echo 'Repository files:'
+            ls -la
+            exit 1
+          fi
+          archive="${archives[0]}"
+          echo "Using project archive: $archive"
+          unzip -q "$archive" -d source
+          project_file="$(find source -type f -name settings.gradle -print -quit)"
+          if [[ -z "$project_file" ]]; then
+            echo 'ERROR: settings.gradle was not found inside the ZIP.'
+            find source -maxdepth 4 -type f -print
+            exit 1
+          fi
+          project_dir="$(dirname "$project_file")"
+          echo "RONEXIO_PROJECT_DIR=$project_dir" >> "$GITHUB_ENV"
+          echo "Found Android project at: $project_dir"
 
       - name: Build debug APK
-        working-directory: source/Ronexio
-        run: gradle --no-daemon assembleDebug
+        shell: bash
+        run: gradle --no-daemon --stacktrace -p "$RONEXIO_PROJECT_DIR" assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Ronexio-debug-apk
-          path: source/Ronexio/app/build/outputs/apk/debug/*.apk
+          path: ${{ env.RONEXIO_PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
-          
